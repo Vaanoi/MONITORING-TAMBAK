@@ -1,5 +1,26 @@
-node_modules
+# Environment variables
+.env
+.env.local
+
 # Firebase credentials
 data-spk-firebase-adminsdk-*.json
 *.json
-.env
+
+# Node modules
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
