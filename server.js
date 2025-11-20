@@ -10,31 +10,30 @@ if (process.env.NODE_ENV !== 'production') {
 
 const app = express();
 
-// CORS configuration - DIPERBAIKI
+// CORS configuration - DIPERBAIKI: Allow semua origin untuk testing
 app.use(cors({
-  origin: ["https://your-frontend-domain.vercel.app", "http://localhost:3000"],
+  origin: "*", // Untuk sementara allow semua origin
+  methods: ["GET", "POST", "PUT", "DELETE"],
   credentials: true
 }));
 
 app.use(bodyParser.json());
 
-// Firebase configuration dengan error handling yang better
+// Firebase configuration
 let serviceAccount;
 let db;
 
 try {
   console.log("Initializing Firebase...");
   
-  // Handle private key formatting
   const privateKey = process.env.FIREBASE_PRIVATE_KEY;
   if (!privateKey) {
     throw new Error("FIREBASE_PRIVATE_KEY is not defined");
   }
 
-  // Clean up the private key - remove extra quotes and handle newlines
   const cleanedPrivateKey = privateKey
-    .replace(/^"|"$/g, '') // Remove surrounding quotes
-    .replace(/\\n/g, '\n'); // Convert \n to actual newlines
+    .replace(/^"|"$/g, '')
+    .replace(/\\n/g, '\n');
 
   serviceAccount = {
     type: process.env.FIREBASE_TYPE,
@@ -51,7 +50,6 @@ try {
   };
 
   console.log("Firebase project:", serviceAccount.project_id);
-  console.log("Firebase client email:", serviceAccount.client_email);
 
   // Initialize Firebase Admin
   admin.initializeApp({
@@ -64,29 +62,24 @@ try {
 
 } catch (error) {
   console.error("Firebase initialization error:", error);
-  console.error("Error details:", {
-    hasPrivateKey: !!process.env.FIREBASE_PRIVATE_KEY,
-    privateKeyLength: process.env.FIREBASE_PRIVATE_KEY?.length,
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL
-  });
   process.exit(1);
 }
 
-// Health check endpoint
+// Health check endpoint - DIPERBAIKI
 app.get("/", (req, res) => {
   res.json({ 
     message: "Backend Monitoring Tambak API", 
     status: "running",
     timestamp: new Date().toISOString(),
-    firebase: {
-      project: process.env.FIREBASE_PROJECT_ID,
-      connected: !!db
+    endpoints: {
+      latest: "/api/sensor/latest",
+      history: "/api/sensor/history",
+      post_data: "/api/sensor"
     }
   });
 });
 
-// POST dari ESP32
+// POST dari ESP32 - TIDAK BERUBAH
 app.post("/api/sensor", (req, res) => {
   try {
     const { temperature, levelPercent, levelStatus, ntu, turbStatus } = req.body;
@@ -136,9 +129,13 @@ app.post("/api/sensor", (req, res) => {
   }
 });
 
-// GET data terbaru
+// GET data terbaru - DIPERBAIKI: Tambah headers CORS
 app.get("/api/sensor/latest", async (req, res) => {
   try {
+    // Tambah headers CORS secara explicit
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET');
+    
     const snapshot = await db.ref("Tambak/DataTerbaru").get();
     if (!snapshot.exists()) {
       return res.status(404).json({ 
@@ -154,7 +151,18 @@ app.get("/api/sensor/latest", async (req, res) => {
     
     const data = snapshot.val();
     console.log("Data terbaru dari Firebase:", data);
-    res.json(data);
+    
+    // Pastikan data memiliki struktur yang konsisten
+    const responseData = {
+      temperature: data.temperature || 0,
+      levelPercent: data.levelPercent || 0,
+      ntu: data.ntu || 0,
+      levelStatus: data.levelStatus || "Tidak Terdeteksi",
+      turbStatus: data.turbStatus || "Tidak Terdeteksi",
+      timestamp: data.timestamp || Date.now()
+    };
+    
+    res.json(responseData);
   } catch (error) {
     console.error("Error ambil data dari Firebase:", error);
     res.status(500).json({ 
@@ -164,16 +172,20 @@ app.get("/api/sensor/latest", async (req, res) => {
   }
 });
 
-// GET history
+// GET history - DIPERBAIKI: Tambah headers CORS
 app.get("/api/sensor/history", async (req, res) => {
   try {
+    // Tambah headers CORS secara explicit
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET');
+    
     const snapshot = await db
       .ref("Tambak/History")
       .limitToLast(20)
       .get();
 
     if (!snapshot.exists()) {
-      return res.json([]); // Return empty array instead of error
+      return res.json([]);
     }
 
     const raw = snapshot.val();
@@ -182,11 +194,21 @@ app.get("/api/sensor/history", async (req, res) => {
       ...raw[key],
     }));
 
-    // Sort by timestamp
-    data.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    // Sort by timestamp dan pastikan data lengkap
+    const sortedData = data
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+      .map(item => ({
+        id: item.id,
+        temperature: item.temperature || 0,
+        levelPercent: item.levelPercent || 0,
+        ntu: item.ntu || 0,
+        levelStatus: item.levelStatus || "Tidak Terdeteksi",
+        turbStatus: item.turbStatus || "Tidak Terdeteksi",
+        timestamp: item.timestamp || Date.now()
+      }));
     
-    console.log(`Mengirim ${data.length} data history`);
-    res.json(data);
+    console.log(`Mengirim ${sortedData.length} data history`);
+    res.json(sortedData);
   } catch (error) {
     console.error("Error ambil history dari Firebase:", error);
     res.status(500).json({ 
@@ -196,26 +218,14 @@ app.get("/api/sensor/history", async (req, res) => {
   }
 });
 
-// Test Firebase connection
-app.get("/api/test-firebase", async (req, res) => {
-  try {
-    const testRef = db.ref("test");
-    await testRef.set({
-      test: "connection",
-      timestamp: Date.now()
-    });
-    
-    const snapshot = await testRef.get();
-    res.json({
-      message: "Firebase connection successful",
-      data: snapshot.val()
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Firebase connection failed",
-      error: error.message
-    });
-  }
+// Test endpoint untuk debugging
+app.get("/api/debug", (req, res) => {
+  res.json({
+    message: "Debug endpoint",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    firebaseProject: process.env.FIREBASE_PROJECT_ID
+  });
 });
 
 const PORT = process.env.PORT || 3000;
@@ -224,6 +234,6 @@ app.listen(PORT, () => {
   console.log(`Backend berjalan pada port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Firebase Project: ${process.env.FIREBASE_PROJECT_ID}`);
-  console.log(`Database URL: ${process.env.FIREBASE_DATABASE_URL}`);
+  console.log(`CORS: Enabled for all origins`);
   console.log(`=================================`);
 });
