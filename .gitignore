@@ -1,0 +1,5 @@
+node_modules
+# Firebase credentials
+data-spk-firebase-adminsdk-*.json
+*.json
+.env
